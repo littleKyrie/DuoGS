@@ -177,8 +177,10 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, load_frame_id=-1, ply_pa
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
+    # Default images path or specific one based on the load_frame_id if specified
     reading_dir = "images" if images is None else images
     reading_dir = str(load_frame_id) if load_frame_id >= 0 else reading_dir
+    # Load images to memory and converted camera params for rendering
     cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
@@ -191,13 +193,16 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, load_frame_id=-1, ply_pa
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
+    # Create a path pointing to a .ply file no matter if it exists or not
+    # The ply file is defaults to points3d.ply in the dataset
     if ply_path is None:
         ply_path = os.path.join(colmap_path, "points3d.ply")
     elif ply_path.endswith('.ply'):
         pass
     else:
         ply_path = os.path.join(ply_path, "points3d.ply")
-    
+
+    # If the .ply file does not exist, generate a random point cloud and save it to the specified path
     if not os.path.exists(ply_path):
         # Since this data set has no colmap data, we start with random points
         num_pts = 100_000

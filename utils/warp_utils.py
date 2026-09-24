@@ -12,7 +12,9 @@ import copy
 CONSOLE = Console(width=120)
 
 class Warpper():
-    
+
+    # Python can add new attributes to the class at runtime by other member methods. 
+    # In this class, record_gaussian() will add raw_xyz and raw_rot attributes to the class.
     def __init__(self, stFrame= 1, edFrame = 2, step = 1):
         self.xyz_velocity = torch.empty(0).cuda()
         self.stFrame_ = stFrame
@@ -73,14 +75,17 @@ class Warpper():
         return self.graph_weights_, self.indices_
 
     def record_gaussian(self, gaussians):
+        # Use copy.deepcopy to create a new instance of gaussians and store it as canonical_gaussians.
         self.canonical_gaussians = copy.deepcopy(gaussians)
+        # Set requires_grad to False for the attributes of canonical_gaussians to prevent them from being updated during training.
         self.canonical_gaussians._xyz.requires_grad = False
         self.canonical_gaussians._features_dc.requires_grad = False
         self.canonical_gaussians._features_rest.requires_grad = False
         self.canonical_gaussians._scaling.requires_grad = False
         self.canonical_gaussians._rotation.requires_grad = False
         self.canonical_gaussians._opacity.requires_grad = False
-        
+
+        # Store the raw_xyz and raw_rot attributes of the gaussians object as attributes of the Warpper class.
         self.raw_xyz = gaussians.get_xyz.clone().detach().requires_grad_(False)
         self.raw_rot = gaussians.get_rotation.clone().detach().requires_grad_(False)
 

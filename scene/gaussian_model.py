@@ -29,36 +29,45 @@ CONSOLE = Console(width=120)
 
 class GaussianModel:
 
+    # Iniialize the function objects using torch operations 
+    # which will not limit the optimization to a specific range of values and fix them after current iteration
     def setup_functions(self):
         def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
             L = build_scaling_rotation(scaling_modifier * scaling, rotation)
             actual_covariance = L @ L.transpose(1, 2)
             symm = strip_symmetric(actual_covariance)
             return symm
-        
+
+        # Maintain the scaling parameters in the positive domain
         self.scaling_activation = torch.exp
         self.scaling_inverse_activation = torch.log
 
         self.covariance_activation = build_covariance_from_scaling_rotation
 
+        # Limit the opacity logit to be in the range [0, 1]
         self.opacity_activation = torch.sigmoid
         self.inverse_opacity_activation = inverse_sigmoid
 
+        # Normalize the rotation quaternion
         self.rotation_activation = torch.nn.functional.normalize
 
 
     def __init__(self, sh_degree):
-        self.active_sh_degree = 0
-        self.max_sh_degree = sh_degree  
+        self.active_sh_degree = 0   # current active SH degree
+        self.max_sh_degree = sh_degree
+        # Initialize the parameters as empty tensors on the GPU
+        # use '_' prefix to indicate that these are internal model attributes
         self._xyz = torch.empty(0).cuda()
-        self._features_dc = torch.empty(0).cuda()
-        self._features_rest = torch.empty(0).cuda()
+        self._features_dc = torch.empty(0).cuda()   # direct current features (SH degree 0)
+        self._features_rest = torch.empty(0).cuda() # remaining features (SH degree 1 and above)
         self._scaling = torch.empty(0).cuda()
         self._rotation = torch.empty(0).cuda()
         self._opacity = torch.empty(0).cuda()
+        # Initialize additional attributes for densification and training
         self.max_radii2D = torch.empty(0).cuda()
         self.xyz_gradient_accum = torch.empty(0).cuda()
         self.denom = torch.empty(0).cuda()
+        # Initialize the optimizer and other training-related attributes
         self.optimizer = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
@@ -183,6 +192,8 @@ class GaussianModel:
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
 
+        # Define a parameter group for each attribute with its corresponding initial learning rate
+        # Item 'params' and 'lr' in each group are required by torch.optim.Adam, while 'name' is a custom key to identify the parameter group
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init_t1 * self.spatial_lr_scale, "name": "xyz"},
             {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
@@ -192,8 +203,12 @@ class GaussianModel:
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
         ]
 
+        # lr is a default learning rate for the optimizer, but it will be overridden by the lr specified in each parameter group
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
         
+        # Schedule the specific params' lr at different iterations
+        # Search and update lr by update_learning_rate() at each iteration
+        # Make xyz_scheduler_args point to the helper function defined in the get_expon_lr_func().
         self.xyz_scheduler_args = get_expon_lr_func(
                                                     lr_init=training_args.position_lr_init_t1*self.spatial_lr_scale,
                                                     lr_final=training_args.position_lr_final_t1*self.spatial_lr_scale,

@@ -61,7 +61,7 @@ class node_graph:
                 CONSOLE.log(f"Saving indices to {indices_path}")
                 np.save(indices_path, self.indices_.cpu().numpy())
 
-    def compute_loss(self, gaussians_canonical, lossp,  is_start_frame):
+    def compute_loss(self, gaussians_canonical, lossp, is_start_frame):
         loss = 0
         loss_info = {}
         
@@ -70,7 +70,7 @@ class node_graph:
             loss_info["scaling"] = scaling_loss.item()
             loss += scaling_loss
             
-        if  lossp.isotropic_term:
+        if lossp.isotropic_term:
             isotropic_loss = lossp.alpha_isotropic * compute_isotropic_loss(gaussians_canonical)
             loss_info["isotropic"] = isotropic_loss.item()
             loss += isotropic_loss
@@ -96,10 +96,13 @@ class node_graph:
         rel_rotations = quaternion_multiply(norm_quaternion(rotations), self.pre_rotations_inv)
         rel_rotations = norm_quaternion(rel_rotations)
         rel_rots = build_rotation(rel_rotations)
+        # Get indices of the neighbor points for each point with shape (N, K) 
         neighbor_points = GaussianModel._xyz[self.indices_]
+        # unsqueeze(1) adds a dimension of size 1 at specified position(1 in this case), changing the shape from (N, 3) to (N, 1, 3)
+        # PyTorch broadcasting allows for element-wise operations so that GaussianModel._xyz will be (N, K, 3)
         curr_diff = GaussianModel._xyz.unsqueeze(1) - neighbor_points
         offset = torch.einsum('bij,bnj->bni', rel_rots, self.prev_diff) - curr_diff
-        loss = torch.sum(  (self.graph_weights_ * ( offset) ** 2).sum(2).sum(1)).mean()
+        loss = torch.sum((self.graph_weights_ * (offset) ** 2).sum(2).sum(1)).mean()
 
         return loss
     
@@ -118,12 +121,14 @@ class node_graph:
         GaussianModel._xyz = GaussianModel.get_xyz + self.xyz_velocity
         
 
-def compute_isotropic_loss( GaussianModel, r=4):
+def compute_isotropic_loss(GaussianModel, r=4):
     scaling_exp = torch.exp(GaussianModel.get_scaling_ori)
     epsilon = 1e-8 
+    # torch.max returns the maximum value and the index of the maximum value along a specified dimension.
     max_val, _ = torch.max(scaling_exp, dim=1)
     min_val, _ = torch.min(scaling_exp, dim=1)
     ratio = torch.max(max_val / (min_val + epsilon), torch.tensor([r]).cuda())
+    # Make nan values in the ratio tensor to be 0.0
     ratio = torch.nan_to_num(ratio, nan=0.0)
     loss = torch.mean(ratio) - r
 
@@ -131,12 +136,18 @@ def compute_isotropic_loss( GaussianModel, r=4):
 
 
 def scaling_control_loss(GaussianModel, threshold_coefficient=2, lower_threshold_coefficient=0.2):
+    # PyTorch computation graph records the average operation
+    # But the detach operation will prevent grad flow through the average value to _scaling 
+    # avg_scaling is a scalar value represented by a zero-dimensional tensor:Tensor([]).
     avg_scaling = GaussianModel.get_scaling.mean().detach()
     upper_threshold = avg_scaling * threshold_coefficient
     lower_threshold = avg_scaling * lower_threshold_coefficient
+    # For each GS(dim/axis=0), get the max scaling value(axis=1) and stored as a 1D tensor(vector) with shape (N,)
     scaling = GaussianModel.get_scaling.max(axis = 1)[0]
+    # Pytorch broadcasting allows for element-wise operations between tensors of different shapes or tensor and scalar
     excess = scaling - upper_threshold
     deficit = lower_threshold - scaling
+    # Pytorch set ReLu grad of zero as zero on the non-differentiable point 
     positive_excess = F.relu(excess)
     positive_deficit = F.relu(deficit)
     loss = positive_excess.sum() + positive_deficit.sum()

@@ -23,7 +23,7 @@ import torch
 CONSOLE = Console(width=120)
 class Scene:
 
-    gaussians: GaussianModel
+    gaussians: GaussianModel    # Clarify that gaussians is of type GaussianModel but not create an instance of it
     def __init__(self, args : ModelParams, gaussians : GaussianModel, shuffle=True, resolution_scales=[1.0], dynamic_training = False, load_frame_id = -1, ply_path = None,
                   parallel_load = False, no_image=False, stage = 1, warpDQB=None, seq=False):
         """b
@@ -38,6 +38,8 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
 
+        # Load camera params based on the scene type
+        # And load images based on the corresponding load_frame_id 
         if os.path.exists(os.path.join(args.source_path, "transforms.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval, load_frame_id = load_frame_id, ply_path = ply_path, no_image=no_image)
@@ -46,6 +48,7 @@ class Scene:
         else:
             assert False, "Could not recognize scene type!"
 
+        # Always load the ply file and camera json to the model path
         if not self.loaded_iter:
             with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
                 dest_file.write(src_file.read())
@@ -60,12 +63,15 @@ class Scene:
             with open(os.path.join(self.model_path, "cameras.json"), 'w') as file:
                 json.dump(json_cams, file)
 
+        # Shuffle the cameras if requested
         if shuffle:
             random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
             random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
 
+        # Get the extent of the cameras for evaluating the range of the scene
         self.cameras_extent = scene_info.nerf_normalization["radius"]
-        
+
+        # Saving the train/test camera information for each resolution scale
         for resolution_scale in resolution_scales:
             if not parallel_load:
                 print("Loading Training Cameras")
@@ -82,22 +88,27 @@ class Scene:
             try:
                 if self.stage == 2:
                     CONSOLE.log("loading motion from control point")
+                    # Only process the second frame after the joint and skin points of the first frame has been initialized
+                    # Build the KNN mapping between the skin points and the joints
+                    # And fix it so that the skin points are always mapped to the same joints in all the next frame
                     if load_frame_id == warpDQB.stFrame_ + warpDQB.step_:
                         warpDQB.skin2JointInterpolation(warpDQB.raw_xyz )
 
                     if seq:
-                        
+                        # Load the point cloud from the previous frame and apply warping
                         self.gaussians.load_ply(os.path.join(self.model_path,
                                                                     "ckt",
                                                                     "point_cloud_%d.ply") % (load_frame_id - warpDQB.step_), self.cameras_extent)
                         warpDQB.warping(self.gaussians, self.gaussians._xyz, self.gaussians._rotation)
                     else:
+                        # Load the point cloud from the starting frame and apply warping
                         self.gaussians.load_ply(os.path.join(self.model_path,
                                                                     "ckt",
                                                                     "point_cloud_%d.ply") % (warpDQB.stFrame_), self.cameras_extent)
                         warpDQB.warping(self.gaussians, warpDQB.raw_xyz, warpDQB.raw_rot)
 
                 else:
+                    # Load the point cloud from the previous frame and apply explicit velocity-based warping
                     self.gaussians.load_ply(os.path.join(self.model_path,
                                                                 "ckt",
                                                                 "point_cloud_%d.ply") % (load_frame_id - warpDQB.step_), self.cameras_extent)
@@ -105,6 +116,8 @@ class Scene:
                         self.gaussians._xyz += warpDQB.xyz_velocity
                
             except:
+                # Mainly used for is_start_frame == True
+                # Or all the other cases where the selective point cloud could not be loaded 
                 CONSOLE.log("Could not load dynamic_training point cloud, creating from scratch")
                 self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
 

@@ -54,10 +54,15 @@ def training_joint(dataset, opt, pipe, lossp, testing_iterations, debug_from, is
     tb_writer = prepare_output_and_logger(dataset)
     ply_path = args.ply_path
 
+    # Initialize the model(Gaussians in this project)
+    # Clarify the main training params of the model.
     joint_gaussian = GaussianModel(dataset.sh_degree)
 
+    # Load training data(cameras\images\ply in this project)
     scene = Scene(dataset, joint_gaussian, dynamic_training = True, load_frame_id = frame_idx, ply_path = ply_path, parallel_load=parallel_load, stage = 1, warpDQB=warpDQB)
 
+    # Set up the training parameters for the model and add them to the optimizer
+    # Build the connection between the model params and the optimizer.
     joint_gaussian.training_setup_t1(opt)
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
@@ -320,14 +325,16 @@ def training_report(tb_writer, gaussian, iteration, Ll1, loss, l1_loss, elapsed,
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":
-    # Set up command line argument parser
+    # Set up argument parser
     parser = ArgumentParser(description="Training script parameters")
+    # Add preset parameters to the parser
     lp = ModelParams(parser)
     op = OptimizationParams(parser)
     pp = PipelineParams(parser)
     lossp1 = LossParamsS1(parser)
     lossp2 = LossParamsS2()
 
+    # Add custom parameters to the parser which can be set from the command line
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[15000, 30000])
@@ -341,14 +348,18 @@ if __name__ == "__main__":
     parser.add_argument('--parallel_load', action='store_true', default=False)
     parser.add_argument("--subseq_iters", type=int, default=None)
     parser.add_argument('--training_mode', type=int, default= 0, help="0: training motion and skin, 1: motion only, 2: skin only")
+    # Parse all the arguments and store them in the args
+    # argv is a list containing the command line input passed to the script. 
+    # argv[0] is the script name, so we skip it and parse the rest of the arguments
     args = parser.parse_args(sys.argv[1:])
 
+    # Create output folder for saving the trained model
     model_path = str(args.model_path)
-
-    print("Optimizing " + args.model_path)
-    
     os.makedirs(args.model_path, exist_ok = True)
 
+    print("Optimizing " + args.model_path)
+
+    # Copy original 3DGS files to the output folder for reproducibility
     shutil.copy('arguments/__init__.py', args.model_path)
     shutil.copy('utils/graph_utils.py', args.model_path)
     shutil.copy('train.py', args.model_path)
@@ -357,11 +368,16 @@ if __name__ == "__main__":
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
+    # Create output folder path for saving the trained tracking
     if args.motion_folder is None:
         args.motion_folder = os.path.join(args.model_path, 'track')
-        
-    # Start GUI server, configure and run training
+
+    # Control error detection for autograd when backpropgating    
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
+
+    # Configure temporal warping and run frame-by-frame training
+    # warpDQB.stFrame_ is always equal to the input starting frame
+    # warpDQB.step_ is the step size between consecutive frames
     warpDQB = Warpper(args.frame_st, args.frame_ed, args.frame_step)
 
     joint_graph = node_graph()
@@ -376,6 +392,7 @@ if __name__ == "__main__":
                 args.model_path = os.path.join(model_path, 'track')
             else:
                 args.model_path = args.motion_folder
+            # extract the corresponding params from the parsed arguments(args) object with stored values
             training_joint(lp.extract(args), op.extract(args), pp.extract(args), lossp1.extract(args), args.test_iterations, args.debug_from, is_start_frame, frame_idx, args=args)
 
         if args.training_mode == 0 or args.training_mode == 2:    
